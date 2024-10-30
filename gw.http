@@ -1,0 +1,14 @@
+POST https://www.warhammer-community.com/api/search/news/
+content-type: application/json
+
+{
+    "sortBy":"date_desc",
+    "category":"",
+    "collections":["articles"],
+    "game_systems":[],
+    "index":"news",
+    "locale":"en-gb",
+    "page":0,
+    "perPage":16,
+    "topics":[]
+}
