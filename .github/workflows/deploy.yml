@@ -1,4 +1,4 @@
-name: Deploy redditchtabletopgamers-site
+name: Deploy rss-feeder
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   deploy:
     uses: ./.github/workflows/deploy-reusable.yml
     with:
-      APP_NAME: redditchtabletopgamers-site
-      IMAGE_NAME: redditchtabletopgamers-site
+      APP_NAME: rss-feeder
+      IMAGE_NAME: rss-feeder
       PORT: "9000"
     secrets: inherit
