@@ -1,0 +1,127 @@
+name: Reusable Deploy
+
+on:
+  workflow_call:
+    inputs:
+      APP_NAME:
+        required: true
+        type: string
+      IMAGE_NAME:
+        required: true
+        type: string
+      PORT:
+        required: true
+        type: string
+    secrets:
+      REGISTRY_HOST:
+        required: true
+      REGISTRY_USERNAME:
+        required: true
+      REGISTRY_PASSWORD:
+        required: true
+      SERVER_HOST:
+        required: true
+      SERVER_USER:
+        required: true
+      SERVER_SSH_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set commit SHA as image tag
+      - name: Set image tag
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      # 3. Login to Docker registry non-interactively
+      - name: Login to registry
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ secrets.REGISTRY_HOST }} -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+
+      # 4. Build and push the image
+      - name: Build and push image
+        run: |
+          docker build -t ${{ secrets.REGISTRY_HOST }}/${{ inputs.IMAGE_NAME }}:${IMAGE_TAG} .
+          docker tag ${{ secrets.REGISTRY_HOST }}/${{ inputs.IMAGE_NAME }}:${IMAGE_TAG} ${{ secrets.REGISTRY_HOST }}/${{ inputs.IMAGE_NAME }}:latest
+          docker push ${{ secrets.REGISTRY_HOST }}/${{ inputs.IMAGE_NAME }}:${IMAGE_TAG}
+          docker push ${{ secrets.REGISTRY_HOST }}/${{ inputs.IMAGE_NAME }}:latest
+
+      # 5. Set up SSH key
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      # 6. Write deploy script with all values baked in, then execute it remotely
+      - name: Deploy via SSH
+        run: |
+          cat > /tmp/deploy.sh << 'SCRIPT_EOF'
+          #!/bin/bash
+          set -e
+
+          IMAGE=REPLACE_REGISTRY_HOST/REPLACE_IMAGE_NAME:REPLACE_IMAGE_TAG
+          CONTAINER_NAME=REPLACE_APP_NAME
+          PORT=REPLACE_PORT
+
+          # Login to registry on server (non-interactive)
+          echo "REPLACE_REGISTRY_PASSWORD" | sudo docker login REPLACE_REGISTRY_HOST -u REPLACE_REGISTRY_USERNAME --password-stdin
+
+          echo "Pulling new image..."
+          sudo docker pull $IMAGE
+
+          echo "Stopping existing container if running..."
+          sudo docker stop $CONTAINER_NAME || true
+          sudo docker rm $CONTAINER_NAME || true
+
+          echo "Starting new container..."
+          sudo docker run -d \
+            --name $CONTAINER_NAME \
+            -p 127.0.0.1:${PORT}:80 \
+            --restart always \
+            $IMAGE
+
+          echo "Waiting for container to stabilize..."
+          sleep 5
+
+          if [ "$(sudo docker inspect -f '{{.State.Running}}' $CONTAINER_NAME)" != "true" ]; then
+            echo "Container failed to start."
+            sudo docker logs $CONTAINER_NAME
+            exit 1
+          fi
+
+          echo "Cleaning old images..."
+          sudo docker images --format "{{.Repository}}:{{.Tag}}" | grep "REPLACE_IMAGE_NAME" | grep -v "REPLACE_IMAGE_TAG" | xargs -r sudo docker rmi -f || true
+          sudo docker image prune -f
+
+          echo "Deployment complete."
+          SCRIPT_EOF
+
+          # Substitute all values into the script
+          sed -i "s|REPLACE_REGISTRY_HOST|${{ secrets.REGISTRY_HOST }}|g" /tmp/deploy.sh
+          sed -i "s|REPLACE_IMAGE_NAME|${{ inputs.IMAGE_NAME }}|g" /tmp/deploy.sh
+          sed -i "s|REPLACE_IMAGE_TAG|${IMAGE_TAG}|g" /tmp/deploy.sh
+          sed -i "s|REPLACE_APP_NAME|${{ inputs.APP_NAME }}|g" /tmp/deploy.sh
+          sed -i "s|REPLACE_PORT|${{ inputs.PORT }}|g" /tmp/deploy.sh
+          sed -i "s|REPLACE_REGISTRY_PASSWORD|${{ secrets.REGISTRY_PASSWORD }}|g" /tmp/deploy.sh
+          sed -i "s|REPLACE_REGISTRY_USERNAME|${{ secrets.REGISTRY_USERNAME }}|g" /tmp/deploy.sh
+
+          chmod +x /tmp/deploy.sh
+
+          # Copy to server, execute, then clean up remote file
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "bash /tmp/deploy.sh && rm /tmp/deploy.sh"
+
+      # 7. Always clean up sensitive files on the runner
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
+          rm -f /tmp/deploy.sh
