@@ -84,7 +84,7 @@ jobs:
           echo "Starting new container..."
           sudo docker run -d \
             --name $CONTAINER_NAME \
-            -p 127.0.0.1:${PORT}:80 \
+            -p 127.0.0.1:${PORT}:5000 \
             --restart always \
             $IMAGE
 
