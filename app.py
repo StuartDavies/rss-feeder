@@ -8,14 +8,16 @@ app = Flask(__name__)
 
 @app.route('/warhammer-community')
 def warhammer_community_feed():
-    rss_content = """<?xml version="1.0" encoding="UTF-8" ?>
-    <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
-        <channel>
-            <title>Warhammer Community News Feed</title>
-            <description>RSS feed generated from the Warhammer Community website</description>
-            <link>https://www.warhammer-community.com/en-gb/all-news-and-features/</link>
-            <atom:link href="https://www.redditchtabletopgamers.com/rss/warhammer-community" rel="self" type="application/rss+xml"/>
-    """
+    rss = ET.Element("rss", version="2.0")
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = "Warhammer Community News Feed"
+    ET.SubElement(channel, "description").text = "RSS feed generated from the Warhammer Community website"
+    ET.SubElement(channel, "link").text = "https://www.warhammer-community.com/en-gb/all-news-and-features/"
+    ET.SubElement(channel, "{http://www.w3.org/2005/Atom}link", {
+        "href": "https://www.redditchtabletopgamers.com/rss/warhammer-community",
+        "rel": "self",
+        "type": "application/rss+xml",
+    })
     api_url = "https://www.warhammer-community.com/api/search/news/"
   
     payload = {
@@ -47,23 +49,16 @@ def warhammer_community_feed():
             date_obj = datetime.strptime(date, "%d %b %y")
             rfc_822_date = date_obj.strftime("%a, %d %b %Y %H:%M:%S %z")
 
-            rss_content += "<item>"
-            rss_content += f"<title>{title}</title>"
-            rss_content += f"<description>{description}</description>"
-            rss_content += f"<link>https://www.warhammer-community.com/en-gb{link}</link>"
-            rss_content += f"<pubDate>{rfc_822_date.rstrip()} GMT</pubDate>"
-            rss_content += f"<guid isPermaLink=\"false\">{guid}</guid>"
-            rss_content += "</item>"
+            item = ET.SubElement(channel, "item")
+            ET.SubElement(item, "title").text = title
+            ET.SubElement(item, "description").text = description
+            ET.SubElement(item, "link").text = f"https://www.warhammer-community.com/en-gb{link}"
+            ET.SubElement(item, "pubDate").text = f"{rfc_822_date.rstrip()} GMT"
+            ET.SubElement(item, "guid", isPermaLink="false").text = guid
 
-        rss_content += """
-            </channel>
-        </rss>
-        """
-
-        xml = ET.XML(rss_content)
         ET.register_namespace("atom", "http://www.w3.org/2005/Atom")
-        ET.indent(xml)
-        xml = ET.tostring(xml, xml_declaration=True, encoding='utf-8', method="xml")
+        ET.indent(rss)
+        xml = ET.tostring(rss, xml_declaration=True, encoding='utf-8', method="xml")
         
         return Response(xml, mimetype='application/rss+xml')
 
